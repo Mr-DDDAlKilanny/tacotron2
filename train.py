@@ -19,6 +19,16 @@ from logger import Tacotron2Logger
 from hparams import create_hparams
 
 
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
+from google.colab import auth
+from oauth2client.client import GoogleCredentials
+
+auth.authenticate_user()
+gauth = GoogleAuth()
+gauth.credentials = GoogleCredentials.get_application_default()
+drive = GoogleDrive(gauth)
+
 def batchnorm_to_float(module):
     """Converts batch norm modules to FP32"""
     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
@@ -110,13 +120,22 @@ def load_checkpoint(checkpoint_path, model, optimizer):
     return model, optimizer, learning_rate, iteration
 
 
-def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
+def save_checkpoint(model, optimizer, learning_rate, iteration, filepath, drive_fid):
     print("Saving model and optimizer state at iteration {} to {}".format(
         iteration, filepath))
     torch.save({'iteration': iteration,
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'learning_rate': learning_rate}, filepath)
+
+    for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
+        file.Delete()
+    f = drive.CreateFile({
+        'title': filepath[filepath.find("/")+1:], 
+        "parents": [{"kind": "drive#fileLink", "id": drive_fid}]
+        })
+    f.SetContentFile(filepath)
+    f.Upload()
 
 
 def validate(model, criterion, valset, iteration, batch_size, n_gpus,
@@ -148,7 +167,7 @@ def validate(model, criterion, valset, iteration, batch_size, n_gpus,
 
 
 def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
-          rank, group_name, hparams):
+          rank, group_name, drive_fid, hparams):
     """Training and validation logging results to tensorboard and stdout
 
     Params
@@ -187,6 +206,11 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
     # Load checkpoint if one exists
     iteration = 0
     epoch_offset = 0
+    for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
+        checkpoint_path = "{}/{}".format(
+            output_directory, file["title"])
+        file.GetContentFile(checkpoint_path)
+        break
     if checkpoint_path is not None:
         if warm_start:
             model = warm_start_model(checkpoint_path, model)
@@ -244,7 +268,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
                     checkpoint_path = os.path.join(
                         output_directory, "checkpoint_{}".format(iteration))
                     save_checkpoint(model, optimizer, learning_rate, iteration,
-                                    checkpoint_path)
+                                    checkpoint_path, drive_fid)
 
             iteration += 1
 
@@ -257,6 +281,8 @@ if __name__ == '__main__':
                         help='directory to save tensorboard logs')
     parser.add_argument('-c', '--checkpoint_path', type=str, default=None,
                         required=False, help='checkpoint path')
+    parser.add_argument("--drive_fid", type=str,
+                        help='Google Drive Folder ID')
     parser.add_argument('--warm_start', action='store_true',
                         help='load the model only (warm start)')
     parser.add_argument('--n_gpus', type=int, default=1,
@@ -281,4 +307,4 @@ if __name__ == '__main__':
     print("cuDNN Benchmark:", hparams.cudnn_benchmark)
 
     train(args.output_directory, args.log_directory, args.checkpoint_path,
-          args.warm_start, args.n_gpus, args.rank, args.group_name, hparams)
+          args.warm_start, args.n_gpus, args.rank, args.group_name, args.drive_fid, hparams)

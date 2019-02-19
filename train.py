@@ -23,6 +23,7 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 from google.colab import auth
 from oauth2client.client import GoogleCredentials
+from time import sleep
 
 auth.authenticate_user()
 gauth = GoogleAuth()
@@ -127,9 +128,22 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, filepath, drive_
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'learning_rate': learning_rate}, filepath)
-
+    
+    if gauth.credentials is None:
+        # Authenticate if they're not there
+        gauth.LocalWebserverAuth()
+    elif gauth.access_token_expired:
+        # Refresh them if expired
+        print("Google Drive Token Expired, Refreshing")
+        gauth.Refresh()
+    else:
+        # Initialize the saved creds
+        gauth.Authorize()
+    # Save the current credentials to a file
+    # gauth.SaveCredentialsFile("GoogleDriveCredentials.txt")
     for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
         file.Delete()
+        sleep(30) #make sure the file is deleted from drive first
     f = drive.CreateFile({
         'title': filepath[filepath.find("/")+1:], 
         "parents": [{"kind": "drive#fileLink", "id": drive_fid}]
@@ -206,11 +220,13 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
     # Load checkpoint if one exists
     iteration = 0
     epoch_offset = 0
-    for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
-        checkpoint_path = "{}/{}".format(
-            output_directory, file["title"])
-        file.GetContentFile(checkpoint_path)
-        break
+    if checkpoint_path == "":
+        for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
+            checkpoint_path = "{}/{}".format(
+                output_directory, file["title"])
+            if not os.path.isfile(checkpoint_path):
+                file.GetContentFile(checkpoint_path)
+            break
     if checkpoint_path is not None:
         if warm_start:
             model = warm_start_model(checkpoint_path, model)

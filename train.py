@@ -220,7 +220,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
     # Load checkpoint if one exists
     iteration = 0
     epoch_offset = 0
-    if checkpoint_path == "":
+    if checkpoint_path is None or checkpoint_path == "":
         for file in drive.ListFile({'q': "'" + drive_fid + "' in parents"}).GetList():
             checkpoint_path = "{}/{}".format(
                 output_directory, file["title"])
